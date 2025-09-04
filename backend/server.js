@@ -70,7 +70,7 @@ Focus on:
 Keep each section brief. Use **bold** formatting for important points. Include difficulty ratings and gamified scores. Total response should be under 300 words.`;
 
 // Routes
-app.post('/analyze', upload.single('file'), async (req, res) => {
+app.post('/analyze-resume', upload.single('resume'), async (req, res) => {
   try {
     console.log('[ANALYZE] Incoming request');
     console.log('[ANALYZE] Headers content-type:', req.headers && req.headers['content-type']);
