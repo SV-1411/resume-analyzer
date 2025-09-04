@@ -21,6 +21,15 @@ Vercel automatically detects the `vercel.json` file in the root directory. This 
 
 You will need to add `GOOGLE_API_KEY` as an environment variable in your Vercel project settings. The other `env` variables like `PORT`, `NODE_ENV`, `GEMINI_MODEL`, `MAX_TOKENS`, and `TEMPERATURE` are configured in `vercel.json` but can also be overridden in the Vercel dashboard if needed.
 
+### Netlify Specifics
+
+For Netlify, in addition to setting `GOOGLE_API_KEY` in your Netlify UI, you should also set an environment variable `CI` to `false`. This prevents Netlify's build process from treating warnings as errors, which can cause builds to fail.
+
+To do this:
+1. Go to your site's **Settings** in Netlify.
+2. Navigate to **Build & Deploy** -> **Environment**.
+3. Add a new variable: **Key:** `CI`, **Value:** `false`.
+
 ## 2. Build Process
 
 The project is configured to use `npm run build` as its build command.
