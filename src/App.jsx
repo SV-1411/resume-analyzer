@@ -72,12 +72,12 @@ const App = () => {
     setAnalysisData(null);
     
     const formData = new FormData();
-    formData.append('file', file);
+    formData.append('resume', file);
     formData.append('portfolioLinks', portfolioLinks);
     
     try {
       const apiUrl = import.meta.env.VITE_API_URL || '/api';
-      const response = await fetch(`${apiUrl}/analyze`, {
+      const response = await fetch(`${apiUrl}/analyze-resume`, {
         method: 'POST',
         body: formData,
       });
