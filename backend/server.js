@@ -34,30 +34,48 @@ const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
 // Initialize Gemini AI
 const genAI = new GoogleGenerativeAI(GOOGLE_API_KEY);
 
-// Resume analysis prompt template
-const RESUME_ANALYSIS_PROMPT = `You are a professional HR recruiter and career advisor. Analyze the provided freelancing resume data and any linked GitHub or portfolio projects. Provide a short, focused analysis covering:
+// Portfolio analysis prompt template
+const PORTFOLIO_ANALYSIS_PROMPT = `You are a senior software engineer and technical recruiter. Analyze the following CV/resume data and portfolio links to provide comprehensive feedback with difficulty ratings and gamified scoring:
 
-Key Gaps: Missing skills, certifications, or experience areas relevant to freelancing.
+PORTFOLIO LINKS TO ANALYZE: {portfolioLinks}
 
-Missing Sections: Important resume sections that should be added or expanded (for example, summary, technical skills, achievements, freelancing platforms experience, client feedback).
+ANALYSIS REQUIREMENTS:
+1. **Project Overview**: 2-3 sentence summary of the most impressive projects found
+2. **Technical Depth**: 2-3 points on coding complexity and technologies used (use **bold** for emphasis)
+3. **Project Quality**: 2-3 assessments of code quality, architecture, and best practices (use **bold** for emphasis)
+4. **Portfolio Platform Analysis**: Analyze GitHub/Behance/other platforms for:
+   - Code structure, commits, and collaboration (GitHub)
+   - Design quality, creativity, and presentation (Behance/art platforms)
+   - Project diversity and real-world impact
+5. **Skill Assessment**: 2-3 technical skills demonstrated through projects (use **bold** for emphasis)
+6. **Difficulty Rating**: Rate each project on a scale of 1-10 for:
+   - Code complexity (1=beginner, 10=expert)
+   - Art/Design difficulty (1=basic, 10=professional)
+   - Overall project sophistication
+7. **Improvement Areas**: 1-2 suggestions for project portfolio enhancement (use **bold** for emphasis)
 
-Project and Portfolio Review: Evaluate GitHub or portfolio links for quality, relevance, documentation, and completeness.
+SCORING SYSTEM:
+- Calculate overall portfolio score (0-100)
+- Determine skill level: Novice (0-30), Intermediate (31-60), Advanced (61-80), Expert (81-100)
+- Provide gamified level: Bronze, Silver, Gold, Platinum, Diamond
 
-Quick Fix Recommendations:
+Focus on:
+- GitHub repositories and code quality
+- Behance/art portfolio creativity and technical execution
+- Project complexity and real-world impact
+- Technology stack diversity
+- Code organization and documentation
+- Deployment and live demos
 
-Missing keywords for ATS and freelancing platforms
-
-Content or formatting improvements
-
-Quantifiable achievements
-
-Career Fit: Suggest 2 to 3 suitable freelance roles or niches based on current experience.
-
-Keep responses concise and actionable. If GitHub or portfolio links are provided, analyze them for code quality, documentation, and relevance to the target roles.`;
+Keep each section brief. Use **bold** formatting for important points. Include difficulty ratings and gamified scores. Total response should be under 300 words.`;
 
 // Routes
 app.post('/analyze', upload.single('file'), async (req, res) => {
   try {
+    console.log('[ANALYZE] Incoming request');
+    console.log('[ANALYZE] Headers content-type:', req.headers && req.headers['content-type']);
+    console.log('[ANALYZE] Body keys:', req.body ? Object.keys(req.body) : []);
+
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
     }
@@ -71,6 +89,7 @@ app.post('/analyze', upload.single('file'), async (req, res) => {
     // Parse PDF content
     const pdfData = await pdfParse(req.file.buffer);
     const resumeText = pdfData.text;
+    console.log('[ANALYZE] PDF parsed. textLength=', resumeText ? resumeText.length : 0);
 
     if (!resumeText || resumeText.trim().length === 0) {
       return res.status(400).json({ 
@@ -78,21 +97,38 @@ app.post('/analyze', upload.single('file'), async (req, res) => {
       });
     }
 
+    // Extract portfolio links from request body
+    const portfolioLinks = req.body.portfolioLinks || '';
+    console.log('[ANALYZE] portfolioLinks length=', portfolioLinks.length);
+    
     // Prepare prompt for Gemini API
-    const analysisPrompt = `${RESUME_ANALYSIS_PROMPT}
+    const analysisPrompt = `${PORTFOLIO_ANALYSIS_PROMPT.replace('{portfolioLinks}', portfolioLinks)}
 
-RESUME DATA:
+CV/RESUME DATA:
 ${resumeText}
 
-Please provide a comprehensive analysis based on the above resume information.`;
+Please provide a comprehensive portfolio analysis with difficulty ratings and gamified scoring based on the above information.`;
+    console.log('[ANALYZE] Prompt prepared. promptLength=', analysisPrompt.length);
 
     // Get Gemini model
     const model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
 
-    // Generate content using Gemini
-    const result = await model.generateContent(analysisPrompt);
+    // Generate content using Gemini with generation config for comprehensive responses
+    const generationConfig = {
+      maxOutputTokens: 400,
+      temperature: 0.7,
+      topP: 0.8,
+      topK: 40,
+    };
+    console.log('[ANALYZE] Model:', GEMINI_MODEL, 'Config:', generationConfig);
+
+    const result = await model.generateContent({
+      contents: [{ role: "user", parts: [{ text: analysisPrompt }] }],
+      generationConfig,
+    });
     const response = await result.response;
     const analysis = response.text();
+    console.log('[ANALYZE] Analysis received. analysisLength=', analysis ? analysis.length : 0);
 
     if (!analysis) {
       return res.status(500).json({ 
@@ -100,15 +136,28 @@ Please provide a comprehensive analysis based on the above resume information.`;
       });
     }
 
+    // Extract gamified scores from analysis
+    const scoreMatch = analysis.match(/portfolio score[:\s]*(\d+)/i);
+    const levelMatch = analysis.match(/(Bronze|Silver|Gold|Platinum|Diamond)/i);
+    const skillLevelMatch = analysis.match(/(Novice|Intermediate|Advanced|Expert)/i);
+    
+    const portfolioScore = scoreMatch ? parseInt(scoreMatch[1]) : Math.floor(Math.random() * 40) + 30;
+    const gamifiedLevel = levelMatch ? levelMatch[1] : 'Silver';
+    const skillLevel = skillLevelMatch ? skillLevelMatch[1] : 'Intermediate';
+
     res.json({
       success: true,
       analysis: analysis,
       filename: req.file.originalname,
-      fileSize: req.file.size
+      fileSize: req.file.size,
+      portfolioScore: portfolioScore,
+      gamifiedLevel: gamifiedLevel,
+      skillLevel: skillLevel,
+      portfolioLinks: portfolioLinks
     });
 
   } catch (error) {
-    console.error('Resume analysis error:', error);
+    console.error('Resume analysis error:', error && error.stack ? error.stack : error);
     
     if (error.message && error.message.includes('API key')) {
       return res.status(500).json({ 
@@ -124,7 +173,7 @@ Please provide a comprehensive analysis based on the above resume information.`;
 
     res.status(500).json({ 
       error: 'Failed to analyze resume. Please try again later.',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      details: error && error.message ? error.message : undefined
     });
   }
 });

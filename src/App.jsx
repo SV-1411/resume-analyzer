@@ -18,6 +18,8 @@ const App = () => {
   const [isDragging, setIsDragging] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+  const [portfolioLinks, setPortfolioLinks] = useState('');
+  const [analysisData, setAnalysisData] = useState(null);
 
   const handleDragOver = (e) => {
     e.preventDefault();
@@ -67,24 +69,44 @@ const App = () => {
     setIsLoading(true);
     setError('');
     setAnalysis('');
+    setAnalysisData(null);
     
     const formData = new FormData();
     formData.append('file', file);
+    formData.append('portfolioLinks', portfolioLinks);
     
     try {
-      const response = await fetch('/api/analyze', {
+      const apiUrl = import.meta.env.VITE_API_URL || '/api';
+      const response = await fetch(`${apiUrl}/analyze`, {
         method: 'POST',
         body: formData,
       });
       
       if (!response.ok) {
-        throw new Error(`Error: ${response.status}`);
+        // Try to extract server error details
+        let serverMsg = '';
+        try {
+          const maybeJson = await response.json();
+          serverMsg = maybeJson?.error || maybeJson?.details || '';
+        } catch (_) {
+          try {
+            serverMsg = await response.text();
+          } catch (_) {}
+        }
+        throw new Error(serverMsg ? `Server error ${response.status}: ${serverMsg}` : `Server error ${response.status}`);
       }
       
       const data = await response.json();
       setAnalysis(data.analysis || 'No analysis available.');
+      setAnalysisData({
+        portfolioScore: data.portfolioScore,
+        gamifiedLevel: data.gamifiedLevel,
+        skillLevel: data.skillLevel,
+        portfolioLinks: data.portfolioLinks
+      });
     } catch (err) {
-      setError('Failed to analyze portfolio. Please try again later.');
+      const respText = err?.message || '';
+      setError(respText ? `Failed to analyze portfolio. ${respText}` : 'Failed to analyze portfolio. Please try again later.');
       console.error('Analysis error:', err);
     } finally {
       setIsLoading(false);
@@ -152,6 +174,29 @@ const App = () => {
             </div>
           </div>
 
+          {/* Portfolio Links Section */}
+          <div className="mb-8">
+            <h3 className="text-lg font-semibold text-gray-700 mb-4">Portfolio Links (Optional)</h3>
+            <div className="space-y-4">
+              <div>
+                <label htmlFor="portfolio-links" className="block text-sm font-medium text-gray-600 mb-2">
+                  Add your portfolio links (GitHub, Behance, personal website, etc.)
+                </label>
+                <textarea
+                  id="portfolio-links"
+                  value={portfolioLinks}
+                  onChange={(e) => setPortfolioLinks(e.target.value)}
+                  placeholder="https://github.com/username&#10;https://behance.net/username&#10;https://yourportfolio.com"
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 resize-none"
+                  rows={4}
+                />
+                <p className="text-sm text-gray-500 mt-2">
+                  Separate multiple links with new lines. Include GitHub, Behance, Dribbble, or any other portfolio platforms.
+                </p>
+              </div>
+            </div>
+          </div>
+
           {error && (
             <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-6">
               {error}
@@ -180,6 +225,59 @@ const App = () => {
             )}
           </button>
         </div>
+
+        {/* Gamified Level System */}
+        {analysisData && !isLoading && (
+          <div className="mb-8">
+            <div className="bg-gradient-to-r from-purple-500 to-blue-600 rounded-xl p-6 text-white">
+              <h2 className="text-2xl font-bold mb-4 flex items-center">
+                <svg className="w-8 h-8 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
+                </svg>
+                Portfolio Level System
+              </h2>
+              
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                {/* Overall Score */}
+                <div className="bg-white/20 rounded-lg p-4 text-center">
+                  <div className="text-3xl font-bold mb-2">{analysisData.portfolioScore}/100</div>
+                  <div className="text-sm opacity-90">Overall Score</div>
+                  <div className="w-full bg-white/30 rounded-full h-2 mt-2">
+                    <div 
+                      className="bg-yellow-400 h-2 rounded-full transition-all duration-1000"
+                      style={{ width: `${analysisData.portfolioScore}%` }}
+                    ></div>
+                  </div>
+                </div>
+
+                {/* Gamified Level */}
+                <div className="bg-white/20 rounded-lg p-4 text-center">
+                  <div className="text-2xl font-bold mb-2 flex items-center justify-center">
+                    {analysisData.gamifiedLevel === 'Bronze' && '🥉'}
+                    {analysisData.gamifiedLevel === 'Silver' && '🥈'}
+                    {analysisData.gamifiedLevel === 'Gold' && '🥇'}
+                    {analysisData.gamifiedLevel === 'Platinum' && '💎'}
+                    {analysisData.gamifiedLevel === 'Diamond' && '💠'}
+                    <span className="ml-2">{analysisData.gamifiedLevel}</span>
+                  </div>
+                  <div className="text-sm opacity-90">Achievement Level</div>
+                </div>
+
+                {/* Skill Level */}
+                <div className="bg-white/20 rounded-lg p-4 text-center">
+                  <div className="text-2xl font-bold mb-2">{analysisData.skillLevel}</div>
+                  <div className="text-sm opacity-90">Skill Level</div>
+                  <div className="mt-2">
+                    {analysisData.skillLevel === 'Novice' && <span className="text-xs bg-blue-400 px-2 py-1 rounded">Beginner</span>}
+                    {analysisData.skillLevel === 'Intermediate' && <span className="text-xs bg-green-400 px-2 py-1 rounded">Developing</span>}
+                    {analysisData.skillLevel === 'Advanced' && <span className="text-xs bg-yellow-400 px-2 py-1 rounded">Skilled</span>}
+                    {analysisData.skillLevel === 'Expert' && <span className="text-xs bg-red-400 px-2 py-1 rounded">Master</span>}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Analysis Results */}
         {isLoading && (
@@ -260,11 +358,20 @@ const App = () => {
           <div className="mt-12 bg-green-50 rounded-lg p-6 border border-green-200">
             <h3 className="text-lg font-semibold text-green-800 mb-3">How it works:</h3>
             <ol className="text-gray-700 space-y-2 list-decimal list-inside">
-              <li>Upload your CV/Resume PDF with project links</li>
-              <li>Our AI analyzes your GitHub repositories and project portfolio</li>
-              <li>Receive concise, actionable feedback on code quality and technical skills</li>
-              <li>Use the bold recommendations to enhance your project portfolio</li>
+              <li>Upload your CV/Resume PDF with project information</li>
+              <li>Add your portfolio links (GitHub, Behance, personal website, etc.)</li>
+              <li>Our AI analyzes your repositories and portfolio platforms</li>
+              <li>Get a gamified score and level rating for your portfolio</li>
+              <li>Receive detailed feedback on code quality, design, and technical skills</li>
+              <li>Use the recommendations to level up your portfolio</li>
             </ol>
+            
+            <div className="mt-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
+              <h4 className="font-semibold text-blue-800 mb-2">🎮 Gamified Level System</h4>
+              <p className="text-sm text-blue-700">
+                Get scored on a 0-100 scale with achievement levels: <strong>Bronze</strong> → <strong>Silver</strong> → <strong>Gold</strong> → <strong>Platinum</strong> → <strong>Diamond</strong>
+              </p>
+            </div>
           </div>
         )}
       </main>

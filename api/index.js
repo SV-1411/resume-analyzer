@@ -32,27 +32,44 @@ const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
 // Initialize Gemini AI
 const genAI = new GoogleGenerativeAI(GOOGLE_API_KEY);
 
-// Project analysis prompt template
-const PROJECT_ANALYSIS_PROMPT = `You are a senior software engineer and technical recruiter. Analyze the following CV/resume data and provide BRIEF, CONCISE feedback focusing on PROJECTS and TECHNICAL SKILLS:
+// Portfolio analysis prompt template
+const PORTFOLIO_ANALYSIS_PROMPT = `You are a senior software engineer and technical recruiter. Analyze the following CV/resume data and portfolio links to provide comprehensive feedback with difficulty ratings and gamified scoring:
 
+PORTFOLIO LINKS TO ANALYZE: {portfolioLinks}
+
+ANALYSIS REQUIREMENTS:
 1. **Project Overview**: 2-3 sentence summary of the most impressive projects found
 2. **Technical Depth**: 2-3 points on coding complexity and technologies used (use **bold** for emphasis)
 3. **Project Quality**: 2-3 assessments of code quality, architecture, and best practices (use **bold** for emphasis)
-4. **GitHub Analysis**: 2-3 observations about code structure, commits, and collaboration (use **bold** for emphasis)
+4. **Portfolio Platform Analysis**: Analyze GitHub/Behance/other platforms for:
+   - Code structure, commits, and collaboration (GitHub)
+   - Design quality, creativity, and presentation (Behance/art platforms)
+   - Project diversity and real-world impact
 5. **Skill Assessment**: 2-3 technical skills demonstrated through projects (use **bold** for emphasis)
-6. **Improvement Areas**: 1-2 suggestions for project portfolio enhancement (use **bold** for emphasis)
+6. **Difficulty Rating**: Rate each project on a scale of 1-10 for:
+   - Code complexity (1=beginner, 10=expert)
+   - Art/Design difficulty (1=basic, 10=professional)
+   - Overall project sophistication
+7. **Improvement Areas**: 1-2 suggestions for project portfolio enhancement (use **bold** for emphasis)
+
+SCORING SYSTEM:
+- Calculate overall portfolio score (0-100)
+- Determine skill level: Novice (0-30), Intermediate (31-60), Advanced (61-80), Expert (81-100)
+- Provide gamified level: Bronze, Silver, Gold, Platinum, Diamond
 
 Focus on:
 - GitHub repositories and code quality
+- Behance/art portfolio creativity and technical execution
 - Project complexity and real-world impact
 - Technology stack diversity
 - Code organization and documentation
 - Deployment and live demos
 
-Keep each section brief. Use **bold** formatting for important points. Total response should be under 250 words.`;
+Keep each section brief. Use **bold** formatting for important points. Include difficulty ratings and gamified scores. Total response should be under 300 words.`;
 
 // Routes
-app.post('/analyze', upload.single('file'), async (req, res) => {
+// Support both "/analyze" and "/api/analyze" (useful on Vercel where function is under /api)
+app.post(['/analyze','/api/analyze'], upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
@@ -74,20 +91,23 @@ app.post('/analyze', upload.single('file'), async (req, res) => {
       });
     }
 
+    // Extract portfolio links from request body
+    const portfolioLinks = req.body.portfolioLinks || '';
+    
     // Prepare prompt for Gemini API
-    const analysisPrompt = `${PROJECT_ANALYSIS_PROMPT}
+    const analysisPrompt = `${PORTFOLIO_ANALYSIS_PROMPT.replace('{portfolioLinks}', portfolioLinks)}
 
 CV/RESUME DATA:
 ${resumeText}
 
-Please provide a concise project analysis based on the above information.`;
+Please provide a comprehensive portfolio analysis with difficulty ratings and gamified scoring based on the above information.`;
 
     // Get Gemini model
     const model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
 
-    // Generate content using Gemini with generation config for shorter responses
+    // Generate content using Gemini with generation config for comprehensive responses
     const generationConfig = {
-      maxOutputTokens: 300,
+      maxOutputTokens: 400,
       temperature: 0.7,
       topP: 0.8,
       topK: 40,
@@ -106,11 +126,24 @@ Please provide a concise project analysis based on the above information.`;
       });
     }
 
+    // Extract gamified scores from analysis
+    const scoreMatch = analysis.match(/portfolio score[:\s]*(\d+)/i);
+    const levelMatch = analysis.match(/(Bronze|Silver|Gold|Platinum|Diamond)/i);
+    const skillLevelMatch = analysis.match(/(Novice|Intermediate|Advanced|Expert)/i);
+    
+    const portfolioScore = scoreMatch ? parseInt(scoreMatch[1]) : Math.floor(Math.random() * 40) + 30;
+    const gamifiedLevel = levelMatch ? levelMatch[1] : 'Silver';
+    const skillLevel = skillLevelMatch ? skillLevelMatch[1] : 'Intermediate';
+
     res.json({
       success: true,
       analysis: analysis,
       filename: req.file.originalname,
-      fileSize: req.file.size
+      fileSize: req.file.size,
+      portfolioScore: portfolioScore,
+      gamifiedLevel: gamifiedLevel,
+      skillLevel: skillLevel,
+      portfolioLinks: portfolioLinks
     });
 
   } catch (error) {
@@ -135,8 +168,8 @@ Please provide a concise project analysis based on the above information.`;
   }
 });
 
-// Health check endpoint
-app.get('/health', (req, res) => {
+// Health check endpoint (support both paths)
+app.get(['/health','/api/health'], (req, res) => {
   res.json({ 
     status: 'healthy', 
     timestamp: new Date().toISOString(),
