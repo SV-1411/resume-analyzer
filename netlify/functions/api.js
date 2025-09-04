@@ -1,198 +1,80 @@
 const express = require('express');
+const serverless = require('serverless-http');
 const multer = require('multer');
 const cors = require('cors');
-const pdfParse = require('pdf-parse');
+const pdf = require('pdf-parse');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const dotenv = require('dotenv');
+
+dotenv.config();
 
 const app = express();
+const port = process.env.PORT || 5000;
 
-// Middleware
 app.use(cors());
 app.use(express.json());
 
-// Configure multer for file uploads
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: {
-    fileSize: 10 * 1024 * 1024, // 10MB limit
-  },
-  fileFilter: (req, file, cb) => {
-    if (file.mimetype === 'application/pdf') {
-      cb(null, true);
-    } else {
-      cb(new Error('Only PDF files are allowed'), false);
-    }
-  },
+const upload = multer({ storage: multer.memoryStorage() });
+
+const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
+
+// Configuration for the Generative AI model
+const model = genAI.getGenerativeModel({
+  model: process.env.GEMINI_MODEL || 'gemini-1.5-flash',
 });
 
-// Gemini API configuration
-const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
+const generationConfig = {
+  maxOutputTokens: parseInt(process.env.MAX_TOKENS || '2000'),
+  temperature: parseFloat(process.env.TEMPERATURE || '0.3'),
+  topP: 1,
+  topK: 1,
+};
 
-// Initialize Gemini AI
-const genAI = new GoogleGenerativeAI(GOOGLE_API_KEY);
+async function extractTextFromPdf(buffer) {
+  const data = await pdf(buffer);
+  return data.text;
+}
 
-// Portfolio analysis prompt template
-const PORTFOLIO_ANALYSIS_PROMPT = `You are a senior software engineer and technical recruiter. Analyze the following CV/resume data and portfolio links to provide comprehensive feedback with difficulty ratings and gamified scoring:
-
-PORTFOLIO LINKS TO ANALYZE: {portfolioLinks}
-
-ANALYSIS REQUIREMENTS:
-1. **Project Overview**: 2-3 sentence summary of the most impressive projects found
-2. **Technical Depth**: 2-3 points on coding complexity and technologies used (use **bold** for emphasis)
-3. **Project Quality**: 2-3 assessments of code quality, architecture, and best practices (use **bold** for emphasis)
-4. **Portfolio Platform Analysis**: Analyze GitHub/Behance/other platforms for:
-   - Code structure, commits, and collaboration (GitHub)
-   - Design quality, creativity, and presentation (Behance/art platforms)
-   - Project diversity and real-world impact
-5. **Skill Assessment**: 2-3 technical skills demonstrated through projects (use **bold** for emphasis)
-6. **Difficulty Rating**: Rate each project on a scale of 1-10 for:
-   - Code complexity (1=beginner, 10=expert)
-   - Art/Design difficulty (1=basic, 10=professional)
-   - Overall project sophistication
-7. **Improvement Areas**: 1-2 suggestions for project portfolio enhancement (use **bold** for emphasis)
-
-SCORING SYSTEM:
-- Calculate overall portfolio score (0-100)
-- Determine skill level: Novice (0-30), Intermediate (31-60), Advanced (61-80), Expert (81-100)
-- Provide gamified level: Bronze, Silver, Gold, Platinum, Diamond
-
-Focus on:
-- GitHub repositories and code quality
-- Behance/art portfolio creativity and technical execution
-- Project complexity and real-world impact
-- Technology stack diversity
-- Code organization and documentation
-- Deployment and live demos
-
-Keep each section brief. Use **bold** formatting for important points. Include difficulty ratings and gamified scores. Total response should be under 300 words.`;
-
-// Routes
-// Support both "/analyze" and "/api/analyze" (useful on Vercel where function is under /api)
-app.post(['/analyze','/api/analyze'], upload.single('file'), async (req, res) => {
+// Main analysis endpoint
+app.post('/analyze-resume', upload.single('resume'), async (req, res) => {
   try {
     if (!req.file) {
-      return res.status(400).json({ error: 'No file uploaded' });
+      return res.status(400).json({ error: 'No resume file uploaded.' });
     }
 
-    if (!GOOGLE_API_KEY) {
-      return res.status(500).json({ 
-        error: 'Google API key not configured. Please set GOOGLE_API_KEY environment variable.' 
-      });
-    }
+    const resumeText = await extractTextFromPdf(req.file.buffer);
 
-    // Parse PDF content
-    const pdfData = await pdfParse(req.file.buffer);
-    const resumeText = pdfData.text;
+    const prompt = `You are an AI assistant specialized in career guidance and resume analysis. Analyze the following resume text and provide a comprehensive report including:
 
-    if (!resumeText || resumeText.trim().length === 0) {
-      return res.status(400).json({ 
-        error: 'Could not extract text from PDF. Please ensure the file contains readable text.' 
-      });
-    }
+1.  **Summary:** A brief overview of the candidate's profile.
+2.  **Strengths:** Key areas where the candidate excels.
+3.  **Areas for Improvement:** Sections that could be enhanced.
+4.  **Keywords:** Important keywords relevant to the candidate's skills and experience.
+5.  **Job Role Suggestions:** Recommend suitable job roles based on the resume.
+6.  **Actionable Advice:** Specific steps the candidate can take to improve their resume and career prospects.
 
-    // Extract portfolio links from request body
-    const portfolioLinks = req.body.portfolioLinks || '';
-    
-    // Prepare prompt for Gemini API
-    const analysisPrompt = `${PORTFOLIO_ANALYSIS_PROMPT.replace('{portfolioLinks}', portfolioLinks)}
-
-CV/RESUME DATA:
+Resume Text:
+"""
 ${resumeText}
+"""
 
-Please provide a comprehensive portfolio analysis with difficulty ratings and gamified scoring based on the above information.`;
+Please format the output in Markdown for readability.`;
 
-    // Get Gemini model
-    const model = genAI.getGenerativeModel({ model: GEMINI_MODEL });
-
-    // Generate content using Gemini with generation config for comprehensive responses
-    const generationConfig = {
-      maxOutputTokens: 400,
-      temperature: 0.7,
-      topP: 0.8,
-      topK: 40,
-    };
-
-    const result = await model.generateContent({
-      contents: [{ role: "user", parts: [{ text: analysisPrompt }] }],
-      generationConfig,
-    });
+    const result = await model.generateContent(prompt);
     const response = await result.response;
-    const analysis = response.text();
+    const text = response.text();
 
-    if (!analysis) {
-      return res.status(500).json({ 
-        error: 'Failed to generate analysis from Gemini API.' 
-      });
-    }
-
-    // Extract gamified scores from analysis
-    const scoreMatch = analysis.match(/portfolio score[:\s]*(\d+)/i);
-    const levelMatch = analysis.match(/(Bronze|Silver|Gold|Platinum|Diamond)/i);
-    const skillLevelMatch = analysis.match(/(Novice|Intermediate|Advanced|Expert)/i);
-    
-    const portfolioScore = scoreMatch ? parseInt(scoreMatch[1]) : Math.floor(Math.random() * 40) + 30;
-    const gamifiedLevel = levelMatch ? levelMatch[1] : 'Silver';
-    const skillLevel = skillLevelMatch ? skillLevelMatch[1] : 'Intermediate';
-
-    res.json({
-      success: true,
-      analysis: analysis,
-      filename: req.file.originalname,
-      fileSize: req.file.size,
-      portfolioScore: portfolioScore,
-      gamifiedLevel: gamifiedLevel,
-      skillLevel: skillLevel,
-      portfolioLinks: portfolioLinks
-    });
-
+    res.json({ analysis: text });
   } catch (error) {
-    console.error('Project analysis error:', error);
-    
-    if (error.message && error.message.includes('API key')) {
-      return res.status(500).json({ 
-        error: 'Invalid Google API key. Please check your configuration.' 
-      });
-    }
-    
-    if (error.message && error.message.includes('quota')) {
-      return res.status(500).json({ 
-        error: 'API quota exceeded. Please try again later.' 
-      });
-    }
-
-    res.status(500).json({ 
-      error: 'Failed to analyze projects. Please try again later.',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
+    console.error('Error analyzing resume:', error);
+    res.status(500).json({ error: 'Failed to analyze resume.' });
   }
 });
 
-// Health check endpoint (support both paths)
-app.get(['/health','/api/health'], (req, res) => {
-  res.json({ 
-    status: 'healthy', 
-    timestamp: new Date().toISOString(),
-    geminiApiConfigured: !!GOOGLE_API_KEY,
-    model: GEMINI_MODEL
-  });
+// Handle root path for Netlify Functions
+app.get('/', (req, res) => {
+  res.send('Resume Analyzer API is running.');
 });
 
-// Error handling middleware
-app.use((error, req, res, next) => {
-  if (error instanceof multer.MulterError) {
-    if (error.code === 'LIMIT_FILE_SIZE') {
-      return res.status(400).json({ error: 'File size exceeds 10MB limit' });
-    }
-  }
-  
-  if (error.message === 'Only PDF files are allowed') {
-    return res.status(400).json({ error: 'Only PDF files are allowed' });
-  }
-
-  console.error('Server error:', error);
-  res.status(500).json({ error: 'Internal server error' });
-});
-
-// Export for Vercel
-module.exports = app;
+// Wrap the Express app with serverless-http for Netlify Functions
+module.exports.handler = serverless(app);
