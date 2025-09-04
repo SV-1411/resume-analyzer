@@ -76,7 +76,12 @@ const App = () => {
     formData.append('portfolioLinks', portfolioLinks);
     
     try {
-      const apiUrl = import.meta.env.VITE_API_URL || '/api';
+      const apiUrl = import.meta.env.VITE_API_URL;
+
+      if (!apiUrl) {
+        throw new Error('VITE_API_URL is not defined. Please set it in your environment variables.');
+      }
+
       const response = await fetch(`${apiUrl}/analyze-resume`, {
         method: 'POST',
         body: formData,
